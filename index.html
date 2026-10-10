@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>台股條件篩選</title>
+<style>
+/* 版面：單欄手機優先。條件以「層」為單位，層內可選且／或；結果在頁面下方。
+   色彩沿用台股習慣：紅漲、綠跌。 */
+:root{
+  --bg:#f6f6f3; --surface:#ffffff; --ink:#1d2329; --muted:#66707a; --line:#dcdcd6;
+  --accent:#1f5f8b; --accent-ink:#ffffff; --soft:#e8eff4;
+  --up:#c8372d; --down:#1b7f4b; --warn:#9a6a00; --warn-bg:#fbf1d9; --err:#b3261e; --err-bg:#fbe5e3;
+  --radius:10px;
+  --font:system-ui,-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#14181c; --surface:#1d2227; --ink:#e7eaed; --muted:#9aa5af; --line:#333b43;
+    --accent:#6fb1dd; --accent-ink:#10202b; --soft:#223341;
+    --up:#ff7b70; --down:#59c58b; --warn:#e6b84d; --warn-bg:#352c12; --err:#ff8a82; --err-bg:#3a1c1a;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14181c; --surface:#1d2227; --ink:#e7eaed; --muted:#9aa5af; --line:#333b43;
+  --accent:#6fb1dd; --accent-ink:#10202b; --soft:#223341;
+  --up:#ff7b70; --down:#59c58b; --warn:#e6b84d; --warn-bg:#352c12; --err:#ff8a82; --err-bg:#3a1c1a;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--font);padding-inline:16px;padding-block:20px 80px}
+main{max-width:680px;margin-inline:auto;display:flex;flex-direction:column;gap:22px}
+h1{font-size:1.35rem;margin:0;letter-spacing:.02em}
+h2{font-size:.8rem;margin:0 0 8px;color:var(--muted);letter-spacing:.12em;font-weight:600}
+p{margin:0}
+.muted{color:var(--muted)} .small{font-size:.85rem}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+input,select{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:40px;min-width:0;width:100%}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 12px;min-height:40px}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--accent)}
+.btn.danger{color:var(--err)}
+.btn[disabled]{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1 1 140px;min-width:0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--surface);padding:8px 14px;min-height:40px}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.layer{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:10px}
+.layer-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.layer-head .title{font-weight:700;margin-right:auto}
+.item{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.item:first-of-type{border-top:0;padding-top:0}
+.item-head{display:flex;gap:8px;align-items:flex-start}
+.item-name{font-weight:600;flex:1;min-width:0}
+.item-name small{display:block;font-weight:400;color:var(--muted)}
+.params{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.field label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:2px}
+.field .unit{display:flex;gap:6px;align-items:center}
+.field .unit span{color:var(--muted);white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:.8rem;background:var(--soft)}
+.chip.not{background:var(--err-bg);color:var(--err);border-color:transparent}
+.joiner{align-self:center;font-size:.85rem;color:var(--muted)}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:10}
+.sheet-body{background:var(--surface);width:100%;max-width:680px;max-height:82%;overflow:auto;border-radius:16px 16px 0 0;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+.sheet h3{margin:14px 0 6px;font-size:.8rem;color:var(--muted);letter-spacing:.12em}
+.pick{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:transparent;padding:10px 2px}
+.pick small{display:block;color:var(--muted)}
+.status{padding:10px 12px;border-radius:8px;background:var(--soft)}
+.status.err{background:var(--err-bg);color:var(--err)}
+.warnbox{padding:8px 12px;border-radius:8px;background:var(--warn-bg);color:var(--warn);font-size:.9rem}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:.9rem}
+th,td{padding:7px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+th{font-size:.75rem;color:var(--muted);font-weight:600}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+tr:last-child td{border-bottom:0}
+.up{color:var(--up)} .down{color:var(--down)}
+.funnel{display:flex;flex-direction:column;gap:4px}
+.funnel div{display:flex;justify-content:space-between;gap:12px;padding:6px 10px;border-radius:6px;background:var(--soft)}
+.funnel b{font-variant-numeric:tabular-nums}
+details{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:10px 12px}
+details>summary{cursor:pointer;font-weight:600}
+details[open]>summary{margin-bottom:10px}
+pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:.78rem;background:var(--soft);padding:10px;border-radius:8px;max-height:260px;overflow:auto}
+.saved-row{display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding:6px 0}
+.saved-row:first-child{border-top:0}
+.saved-row span{flex:1;min-width:0;overflow-wrap:anywhere}
+.help{font-size:.85rem;color:var(--muted);display:flex;flex-direction:column;gap:6px}
+.help ol{margin:0;padding-left:1.3em}
+</style>
+</head>
+<body>
+<main>
+  <header class="row" style="justify-content:space-between">
+    <h1>台股條件篩選</h1>
+    <span class="muted small" id="dataHint"></span>
+  </header>
+
+  <details id="settings">
+    <summary>連線設定</summary>
+    <div class="help" style="margin-bottom:10px">
+      <p>只需設定一次，資料只存在這支手機的瀏覽器裡。</p>
+      <ol>
+        <li>GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token。</li>
+        <li>Repository access 選 <b>Only select repositories</b>，只勾你的 twStock。</li>
+        <li>Permissions：<b>Actions → Read and write</b>、<b>Contents → Read-only</b>。</li>
+        <li>把產生的 token 貼在下面。</li>
+      </ol>
+    </div>
+    <div class="params">
+      <div class="field"><label for="owner">GitHub 帳號</label><input id="owner" autocomplete="off" autocapitalize="off" placeholder="例如 wuzzda"></div>
+      <div class="field"><label for="repo">Repository 名稱</label><input id="repo" autocomplete="off" autocapitalize="off" placeholder="twStock"></div>
+      <div class="field"><label for="branch">主分支</label><input id="branch" autocomplete="off" autocapitalize="off" placeholder="main"></div>
+      <div class="field"><label for="token">Token</label><input id="token" type="password" autocomplete="off" autocapitalize="off" placeholder="github_pat_…"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="saveSettings">儲存</button>
+      <button class="btn" id="testSettings">測試連線</button>
+      <button class="btn ghost" id="clearToken">清除 token</button>
+    </div>
+    <p class="small" id="settingsMsg" style="margin-top:8px"></p>
+  </details>
+
+  <section>
+    <h2>要做什麼</h2>
+    <div class="seg" role="group" aria-label="模式">
+      <button id="modeScreen" aria-pressed="true">今日篩選</button>
+      <button id="modeBacktest" aria-pressed="false">回測</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>條件（一層一層往下篩）</h2>
+    <p class="muted small" style="margin-bottom:10px">第 2 層只會在第 1 層的結果裡找。同一層裡放多個條件時，可選「且」（全部符合）或「或」（符合任一個）。</p>
+    <div id="layers" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="addLayer">＋ 新增一層</button></div>
+  </section>
+
+  <section>
+    <h2>日期與參數</h2>
+    <div class="params" id="dateFields"></div>
+    <details style="margin-top:10px">
+      <summary>進階</summary>
+      <div class="params">
+        <div class="field"><label for="minTurnover">流動性門檻：20 日均成交額 ≥（萬元）</label><input id="minTurnover" inputmode="numeric" value="5000"></div>
+        <div class="field" id="holdField"><label for="hold">回測持有天數（逗號分隔）</label><input id="hold" value="1,5,10,20"></div>
+        <div class="field" id="entryField"><label for="entry">回測進場方式</label>
+          <select id="entry"><option value="next_open">隔天開盤價（建議）</option><option value="close">訊號當天收盤價（偏樂觀）</option></select></div>
+      </div>
+    </details>
+  </section>
+
+  <section class="row">
+    <button class="btn primary grow" id="run">執行</button>
+    <button class="btn" id="saveSetup">存成常用</button>
+  </section>
+
+  <div id="status" hidden></div>
+  <section id="result" hidden></section>
+
+  <section id="savedBox" hidden>
+    <h2>常用組合</h2>
+    <div id="saved"></div>
+  </section>
+
+  <details>
+    <summary>這次送出的設定（除錯用）</summary>
+    <pre id="specView"></pre>
+  </details>
+</main>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-body" role="dialog" aria-label="選擇條件">
+    <div class="row" style="justify-content:space-between"><b>加入條件</b><button class="btn ghost" id="closeSheet">關閉</button></div>
+    <div id="sheetList"></div>
+  </div>
+</div>
+
+<script>
+const DATA = {"categories":["漲跌","趨勢","量能","指標","位置","K線"],"conditions":[{"key":"gain_within","cat":"漲跌","label":"N 日內漲幅達 X%（曾經出現過）","desc":"某一天的收盤價比 N 個交易日前高出 X% 以上，且這件事發生在最近幾個交易日內（還原價）。","params":[{"name":"days","label":"幾個交易日內","type":"int","default":3,"min":1},{"name":"pct","label":"漲幅 ≥","type":"pct","default":25,"unit":"%"},{"name":"within","label":"發生在最近幾個交易日內（0 = 資料內任何時候）","type":"int","default":20,"min":0}]},{"key":"min_return","cat":"漲跌","label":"當日漲幅 ≥ X%","desc":"今天的還原漲幅。","params":[{"name":"pct","label":"漲幅 ≥","type":"pct","default":3,"unit":"%"}]},{"key":"max_return","cat":"漲跌","label":"當日漲幅 ≤ X%","desc":"今天的還原漲幅（可填負數，例如 -3 = 跌 3% 以上）。","params":[{"name":"pct","label":"漲幅 ≤","type":"pct","default":-3,"unit":"%"}]},{"key":"above_ma","cat":"趨勢","label":"收盤站上均線","desc":"還原收盤價高於 N 日均線。","params":[{"name":"n","label":"均線","type":"choice","default":20,"choices":[[5,"5 日"],[10,"10 日"],[20,"20 日"],[60,"60 日"]]}]},{"key":"below_ma","cat":"趨勢","label":"收盤跌破均線","desc":"還原收盤價低於 N 日均線。","params":[{"name":"n","label":"均線","type":"choice","default":20,"choices":[[5,"5 日"],[10,"10 日"],[20,"20 日"],[60,"60 日"]]}]},{"key":"breakout","cat":"趨勢","label":"創 N 日新高（突破）","desc":"收盤價高於前 N 日最高價（不含今天）。","params":[{"name":"n","label":"N 日","type":"int","default":20,"min":2}]},{"key":"breakdown","cat":"趨勢","label":"創 N 日新低（跌破）","desc":"收盤價低於前 N 日最低價（不含今天）。","params":[{"name":"n","label":"N 日","type":"int","default":20,"min":2}]},{"key":"ma_bull","cat":"趨勢","label":"多頭排列","desc":"MA5 > MA10 > MA20 > MA60。","params":[]},{"key":"ma_bear","cat":"趨勢","label":"空頭排列","desc":"MA5 < MA10 < MA20 < MA60。","params":[]},{"key":"ma_cross","cat":"趨勢","label":"均線交叉（剛發生）","desc":"快線穿越慢線的那一天。","params":[{"name":"fast","label":"快線","type":"choice","default":5,"choices":[[5,"5 日"],[10,"10 日"],[20,"20 日"],[60,"60 日"]]},{"name":"slow","label":"慢線","type":"choice","default":20,"choices":[[5,"5 日"],[10,"10 日"],[20,"20 日"],[60,"60 日"]]},{"name":"direction","label":"方向","type":"choice","default":"up","choices":[["up","向上（黃金）"],["down","向下（死亡）"]]}]},{"key":"ma_tangle","cat":"趨勢","label":"均線糾結","desc":"MA5、MA10、MA20 彼此最大差距不超過 X%。","params":[{"name":"pct","label":"差距 ≤","type":"pct","default":3,"unit":"%"}]},{"key":"rs","cat":"趨勢","label":"相對強勢（贏過全市場）","desc":"近 N 日漲幅在全市場的百分位 ≥ X（80 = 贏過 80% 的股票）。","params":[{"name":"n","label":"N 日","type":"choice","default":20,"choices":[[20,"20 日"],[60,"60 日"]]},{"name":"min_pct","label":"百分位 ≥","type":"num","default":80}]},{"key":"volume_surge","cat":"量能","label":"爆量","desc":"今日量 ≥ 前 5 日均量的 X 倍。","params":[{"name":"ratio","label":"倍數 ≥","type":"num","default":2}]},{"key":"min_turnover","cat":"量能","label":"20 日均成交額 ≥ X 萬","desc":"額外的流動性門檻（全域門檻另外設定）。","params":[{"name":"value","label":"成交額 ≥","type":"wan","default":5000,"unit":"萬"}]},{"key":"rsi","cat":"指標","label":"RSI(14) 範圍","desc":"超賣：上限 30；超買：下限 70。","params":[{"name":"min","label":"RSI ≥","type":"num","optional":true},{"name":"max","label":"RSI ≤","type":"num","optional":true}]},{"key":"kd_cross","cat":"指標","label":"KD 交叉（剛發生）","desc":"K 穿越 D 的那一天；可限制交叉時 K 值的高低。","params":[{"name":"direction","label":"方向","type":"choice","default":"up","choices":[["up","向上（黃金）"],["down","向下（死亡）"]]},{"name":"below","label":"交叉時 K 值 <","type":"num","optional":true},{"name":"above","label":"交叉時 K 值 >","type":"num","optional":true}]},{"key":"macd_cross","cat":"指標","label":"MACD 交叉（剛發生）","desc":"DIF 穿越訊號線的那一天。","params":[{"name":"direction","label":"方向","type":"choice","default":"up","choices":[["up","向上（黃金）"],["down","向下（死亡）"]]}]},{"key":"bollinger","cat":"指標","label":"布林通道突破","desc":"收盤價在上軌之上或下軌之下。","params":[{"name":"where","label":"位置","type":"choice","default":"above_upper","choices":[["above_upper","突破上軌"],["below_lower","跌破下軌"]]}]},{"key":"bias","cat":"指標","label":"乖離率範圍","desc":"收盤價相對均線的距離。","params":[{"name":"n","label":"均線","type":"choice","default":20,"choices":[[20,"20 日"],[60,"60 日"]]},{"name":"min","label":"乖離 ≥","type":"pct","optional":true,"unit":"%"},{"name":"max","label":"乖離 ≤","type":"pct","optional":true,"unit":"%"}]},{"key":"atr_pct","cat":"指標","label":"日波動幅度（ATR）","desc":"ATR(14) 除以收盤價。","params":[{"name":"min","label":"≥","type":"pct","optional":true,"unit":"%"},{"name":"max","label":"≤","type":"pct","optional":true,"unit":"%"}]},{"key":"between","cat":"指標","label":"自訂欄位範圍","desc":"任一衍生欄位落在指定範圍內。","params":[{"name":"col","label":"欄位","type":"choice","default":"rsi14","choices":[["rsi14","RSI(14)"],["k9","K 值"],["d9","D 值"],["dif","MACD DIF"],["osc","MACD 柱狀體"],["bias20","月線乖離率（小數，0.1 = 10%）"],["bias60","季線乖離率（小數）"],["atr_pct","ATR/收盤（小數）"],["pct_b","布林 %b（0 = 下軌、1 = 上軌）"],["bb_width","布林通道寬度（小數）"],["ret5","近 5 日漲幅（小數）"],["ret20","近 20 日漲幅（小數）"],["ret60","近 60 日漲幅（小數）"],["rs20","20 日相對強弱百分位（0~100）"],["rs60","60 日相對強弱百分位（0~100）"],["ret20_ex","20 日超額報酬（小數）"],["pos_y","一年區間位置（0 = 低點、1 = 高點）"],["dist_hi_y","距一年高點（小數，-0.1 = 低 10%）"],["vol_ratio5","量比（今日量 / 前5日均量）"],["turnover_ma20","20 日均成交額（元）"],["volume_lots","成交張數"]]},{"name":"min","label":"最小值","type":"num","optional":true},{"name":"max","label":"最大值","type":"num","optional":true}]},{"key":"near_year_high","cat":"位置","label":"接近一年高點","desc":"收盤價距離一年高點不超過 X%。","params":[{"name":"pct","label":"距離 ≤","type":"pct","default":5,"unit":"%"}]},{"key":"near_year_low","cat":"位置","label":"接近一年低點","desc":"收盤價距離一年低點不超過 X%。","params":[{"name":"pct","label":"距離 ≤","type":"pct","default":15,"unit":"%"}]},{"key":"year_position","cat":"位置","label":"一年區間位置","desc":"0% = 一年低點、100% = 一年高點。","params":[{"name":"min","label":"位置 ≥","type":"pct","optional":true,"unit":"%"},{"name":"max","label":"位置 ≤","type":"pct","optional":true,"unit":"%"}]},{"key":"gap","cat":"K線","label":"跳空缺口","desc":"今天最低價高於昨天最高價（向上），或最高價低於昨天最低價（向下）。","params":[{"name":"direction","label":"方向","type":"choice","default":"up","choices":[["up","向上"],["down","向下"]]}]},{"key":"long_lower_shadow","cat":"K線","label":"長下影線","desc":"探底回升：下影線 ≥ 實體的 N 倍且佔全長一半以上，並要求當天振幅夠大。","params":[{"name":"ratio","label":"下影線 ≥ 實體的","type":"num","default":2,"unit":"倍"},{"name":"min_range","label":"當天振幅 ≥","type":"pct","default":2,"unit":"%"}]},{"key":"long_upper_shadow","cat":"K線","label":"長上影線","desc":"衝高回落：條件與長下影線對稱。","params":[{"name":"ratio","label":"上影線 ≥ 實體的","type":"num","default":2,"unit":"倍"},{"name":"min_range","label":"當天振幅 ≥","type":"pct","default":2,"unit":"%"}]},{"key":"engulfing","cat":"K線","label":"吞噬型態","desc":"今天的實體完全包住昨天的實體（昨黑今紅＝多頭）。","params":[{"name":"direction","label":"方向","type":"choice","default":"bull","choices":[["bull","多頭吞噬"],["bear","空頭吞噬"]]}]},{"key":"streak","cat":"K線","label":"連續紅K／黑K","desc":"連續 N 天以上收紅（收盤 > 開盤）或收黑。","params":[{"name":"color","label":"顏色","type":"choice","default":"red","choices":[["red","紅K（上漲）"],["black","黑K（下跌）"]]},{"name":"n","label":"連續 ≥","type":"int","default":3,"unit":"天","min":1}]}],"groups":[{"name":"站上月線","desc":"收盤站上均線［均線=20 日］"},{"name":"突破20日高","desc":"創 N 日新高（突破）［N 日=20］"},{"name":"爆量","desc":"爆量［倍數 ≥=2］"},{"name":"強勢突破","desc":"收盤站上均線［均線=20 日］；創 N 日新高（突破）［N 日=20］；爆量［倍數 ≥=2］"},{"name":"多頭排列","desc":"多頭排列"},{"name":"均線糾結後發散","desc":"均線糾結［差距 ≤=3%、最近 10 個交易日內曾經成立］；多頭排列"},{"name":"相對強勢","desc":"相對強勢（贏過全市場）［N 日=20 日、百分位 ≥=80］"},{"name":"短線急漲","desc":"N 日內漲幅達 X%（曾經出現過）［幾個交易日內=3、漲幅 ≥=25%、發生在最近幾個交易日內=20］"},{"name":"接近一年高點","desc":"接近一年高點［距離 ≤=5%］"},{"name":"接近一年低點","desc":"接近一年低點［距離 ≤=15%］"},{"name":"超賣","desc":"RSI(14) 範圍［RSI ≤=30］"},{"name":"低檔KD黃金交叉","desc":"KD 交叉（剛發生）［方向=向上（黃金）、交叉時 K 值 <=30、最近 3 個交易日內曾經成立］"},{"name":"長下影線","desc":"長下影線［下影線 ≥ 實體的=2、最近 3 個交易日內曾經成立］"},{"name":"多頭吞噬","desc":"吞噬型態［方向=多頭吞噬、最近 3 個交易日內曾經成立］"},{"name":"止跌訊號","desc":"任一：(群組「低檔KD黃金交叉」 或 群組「長下影線」 或 群組「多頭吞噬」)"}]};
+</script>
+<script>
+"use strict";
+/* ---------- 小工具 ---------- */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 私密視窗等情況：略過 */ } },
+};
+const COND = Object.fromEntries(DATA.conditions.map((c) => [c.key, c]));
+const GROUP = Object.fromEntries(DATA.groups.map((g) => [g.name, g]));
+
+/* ---------- 狀態 ---------- */
+let state = store.get("tw.state", null) || { mode: "screen", layers: [{ op: "all", items: [] }], asOf: "", start: "", end: "", minTurnover: "5000", hold: "1,5,10,20", entry: "next_open" };
+let sheetLayer = 0;
+const save = () => store.set("tw.state", state);
+
+function newItem(kind, key) {
+  if (kind === "group") return { kind, name: key, not: false, window: "" };
+  const vals = {};
+  for (const p of COND[key].params) vals[p.name] = p.default == null ? "" : String(p.type === "choice" ? p.default : p.default);
+  return { kind, key, not: false, window: "", vals };
+}
+
+/* ---------- 組 spec（送給 Python 引擎的設定） ---------- */
+function convert(p, raw) {
+  if (raw === "" || raw == null) return { skip: true };
+  if (p.type === "choice") {
+    const hit = p.choices.find(([v]) => String(v) === String(raw));
+    return { value: hit ? hit[0] : raw };
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { error: `「${p.label}」不是數字` };
+  if (p.type === "int") return Number.isInteger(n) ? { value: n } : { error: `「${p.label}」要填整數` };
+  if (p.type === "pct") return { value: n / 100 };
+  if (p.type === "wan") return { value: Math.round(n * 10000) };
+  return { value: n };
+}
+
+function buildItem(it) {
+  let step;
+  if (it.kind === "group") {
+    step = { group: it.name };
+  } else {
+    const def = COND[it.key];
+    step = { cond: it.key };
+    for (const p of def.params) {
+      const r = convert(p, it.vals[p.name]);
+      if (r.error) throw new Error(`${def.label}：${r.error}`);
+      if (r.skip) { if (!p.optional) throw new Error(`${def.label}：請填「${p.label}」`); continue; }
+      step[p.name] = r.value;
+      if (it.key === "gain_within" && p.name === "within" && r.value === 0) step[p.name] = "all";
+    }
+  }
+  if (it.window !== "" && !(it.kind === "cond" && it.key === "gain_within")) {
+    const w = Number(it.window);
+    if (!Number.isInteger(w) || w < 1) throw new Error("「最近幾天內曾經成立」要填 1 以上的整數");
+    if (w > 1) step.within = w;
+  }
+  return it.not ? { not: step } : step;
+}
+
+function buildSpec() {
+  const steps = [];
+  state.layers.forEach((layer, i) => {
+    if (!layer.items.length) return;
+    const parts = layer.items.map(buildItem);
+    steps.push(parts.length === 1 ? parts[0] : { [layer.op === "any" ? "any" : "all"]: parts });
+  });
+  if (!steps.length) throw new Error("請至少加入一個條件");
+  const mt = Number(state.minTurnover);
+  if (!Number.isFinite(mt) || mt < 0) throw new Error("流動性門檻要填數字（萬元）");
+  const spec = { name: "網頁自訂", mode: state.mode, params: { min_turnover: Math.round(mt * 10000) }, steps };
+  if (state.mode === "backtest") {
+    const hold = String(state.hold).split(/[,，\s]+/).filter(Boolean).map(Number);
+    if (!hold.length || hold.some((n) => !Number.isInteger(n) || n < 1)) throw new Error("持有天數要填 1 以上的整數，例如 1,5,10");
+    spec.params.hold_days = hold;
+    spec.params.entry = state.entry;
+    if (state.start) spec.start = state.start;
+    if (state.end) spec.end = state.end;
+  } else if (state.asOf) {
+    spec.as_of = state.asOf;
+  }
+  return spec;
+}
+
+/* ---------- 畫面：條件層 ---------- */
+function paramField(p, val, li, ii) {
+  const id = `p-${li}-${ii}-${p.name}`;
+  const unit = p.unit ? `<span>${esc(p.unit)}</span>` : "";
+  let input;
+  if (p.type === "choice") {
+    input = `<select id="${id}" data-l="${li}" data-i="${ii}" data-p="${esc(p.name)}">${p.choices.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(val) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+  } else {
+    input = `<input id="${id}" inputmode="decimal" data-l="${li}" data-i="${ii}" data-p="${esc(p.name)}" value="${esc(val)}"${p.optional ? ' placeholder="不限"' : ""}>`;
+  }
+  return `<div class="field"><label for="${id}">${esc(p.label)}</label><div class="unit">${input}${unit}</div></div>`;
+}
+
+function itemHtml(it, li, ii) {
+  const isGroup = it.kind === "group";
+  const def = isGroup ? null : COND[it.key];
+  const title = isGroup ? `常用組合：${it.name}` : def.label;
+  const desc = isGroup ? (GROUP[it.name] ? GROUP[it.name].desc : "") : def.desc;
+  const params = isGroup ? "" : def.params.map((p) => paramField(p, it.vals[p.name], li, ii)).join("");
+  const windowable = isGroup || it.key !== "gain_within";
+  const win = windowable ? `<div class="field"><label for="w-${li}-${ii}">只要最近幾個交易日內曾經成立（空白 = 只看當天）</label><input id="w-${li}-${ii}" inputmode="numeric" data-l="${li}" data-i="${ii}" data-w="1" value="${esc(it.window)}" placeholder="例如 5"></div>` : "";
+  return `<div class="item">
+    <div class="item-head">
+      <div class="item-name">${it.not ? '<span class="chip not">排除</span> ' : ""}${esc(title)}<small>${esc(desc)}</small></div>
+      <button class="btn ${it.not ? "primary" : ""}" data-act="not" data-l="${li}" data-i="${ii}" aria-pressed="${it.not}" title="反過來：排除符合這個條件的股票">排除</button>
+      <button class="btn danger" data-act="delItem" data-l="${li}" data-i="${ii}" aria-label="刪除這個條件">刪除</button>
+    </div>
+    ${params || win ? `<div class="params">${params}${win}</div>` : ""}
+  </div>`;
+}
+
+function renderLayers() {
+  const box = $("layers");
+  box.innerHTML = state.layers.map((layer, li) => {
+    const items = layer.items.map((it, ii) => (ii ? `<div class="joiner">${layer.op === "any" ? "或" : "且"}</div>` : "") + itemHtml(it, li, ii)).join("");
+    const op = layer.items.length > 1 ? `<div class="seg" role="group" aria-label="同一層的組合方式">
+        <button data-act="op" data-l="${li}" data-op="all" aria-pressed="${layer.op !== "any"}">且</button>
+        <button data-act="op" data-l="${li}" data-op="any" aria-pressed="${layer.op === "any"}">或</button></div>` : "";
+    const move = state.layers.length > 1 ? `<button class="btn" data-act="up" data-l="${li}" aria-label="往上移" ${li === 0 ? "disabled" : ""}>↑</button><button class="btn" data-act="down" data-l="${li}" aria-label="往下移" ${li === state.layers.length - 1 ? "disabled" : ""}>↓</button><button class="btn danger" data-act="delLayer" data-l="${li}">刪除此層</button>` : "";
+    return `<div class="layer">
+      <div class="layer-head"><span class="title">第 ${li + 1} 層${li ? '<span class="muted small">（從上一層的結果再篩）</span>' : ""}</span>${op}${move}</div>
+      ${items || '<p class="muted small">還沒有條件，按下面的按鈕加入。</p>'}
+      <div><button class="btn" data-act="add" data-l="${li}">＋ 加條件</button></div>
+    </div>`;
+  }).join("");
+  save();
+}
+
+function renderDates() {
+  const f = state.mode === "backtest"
+    ? `<div class="field"><label for="start">回測起日（空白 = 最早）</label><input id="start" type="date" value="${esc(state.start)}"></div>
+       <div class="field"><label for="end">回測迄日（空白 = 最新）</label><input id="end" type="date" value="${esc(state.end)}"></div>`
+    : `<div class="field"><label for="asOf">篩選日期（空白 = 最新一天）</label><input id="asOf" type="date" value="${esc(state.asOf)}"></div>`;
+  $("dateFields").innerHTML = f;
+  $("holdField").hidden = $("entryField").hidden = state.mode !== "backtest";
+  $("modeScreen").setAttribute("aria-pressed", state.mode === "screen");
+  $("modeBacktest").setAttribute("aria-pressed", state.mode === "backtest");
+  $("minTurnover").value = state.minTurnover; $("hold").value = state.hold; $("entry").value = state.entry;
+}
+
+/* ---------- 加條件的選單 ---------- */
+function openSheet(li) {
+  sheetLayer = li;
+  let html = "";
+  if (DATA.groups.length) {
+    html += `<h3>常用組合</h3>` + DATA.groups.map((g) => `<button class="pick" data-pick="group" data-key="${esc(g.name)}">${esc(g.name)}<small>${esc(g.desc)}</small></button>`).join("");
+  }
+  for (const cat of DATA.categories) {
+    html += `<h3>${esc(cat)}</h3>` + DATA.conditions.filter((c) => c.cat === cat).map((c) => `<button class="pick" data-pick="cond" data-key="${esc(c.key)}">${esc(c.label)}<small>${esc(c.desc)}</small></button>`).join("");
+  }
+  $("sheetList").innerHTML = html;
+  $("sheet").hidden = false;
+}
+const closeSheet = () => { $("sheet").hidden = true; };
+
+/* ---------- 事件 ---------- */
+$("layers").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const li = Number(b.dataset.l), ii = Number(b.dataset.i), L = state.layers;
+  switch (b.dataset.act) {
+    case "add": openSheet(li); return;
+    case "delItem": L[li].items.splice(ii, 1); break;
+    case "not": L[li].items[ii].not = !L[li].items[ii].not; break;
+    case "op": L[li].op = b.dataset.op; break;
+    case "up": if (li > 0) [L[li - 1], L[li]] = [L[li], L[li - 1]]; break;
+    case "down": if (li < L.length - 1) [L[li + 1], L[li]] = [L[li], L[li + 1]]; break;
+    case "delLayer": L.splice(li, 1); if (!L.length) L.push({ op: "all", items: [] }); break;
+  }
+  renderLayers();
+});
+$("layers").addEventListener("input", (e) => {
+  const t = e.target, li = Number(t.dataset.l), ii = Number(t.dataset.i);
+  if (Number.isNaN(li) || Number.isNaN(ii)) return;
+  const it = state.layers[li].items[ii];
+  if (t.dataset.w) it.window = t.value; else it.vals[t.dataset.p] = t.value;
+  save();
+});
+$("addLayer").onclick = () => { state.layers.push({ op: "all", items: [] }); renderLayers(); };
+$("sheetList").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-pick]"); if (!b) return;
+  state.layers[sheetLayer].items.push(newItem(b.dataset.pick, b.dataset.key));
+  closeSheet(); renderLayers();
+});
+$("closeSheet").onclick = closeSheet;
+$("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
+$("modeScreen").onclick = () => { state.mode = "screen"; save(); renderDates(); };
+$("modeBacktest").onclick = () => { state.mode = "backtest"; save(); renderDates(); };
+$("dateFields").addEventListener("input", (e) => { const m = { asOf: "asOf", start: "start", end: "end" }[e.target.id]; if (m) { state[m] = e.target.value; save(); } });
+$("minTurnover").oninput = (e) => { state.minTurnover = e.target.value; save(); };
+$("hold").oninput = (e) => { state.hold = e.target.value; save(); };
+$("entry").onchange = (e) => { state.entry = e.target.value; save(); };
+
+/* ---------- 連線設定 ---------- */
+const cfg = () => store.get("tw.settings", { owner: "", repo: "twStock", branch: "main", token: "" });
+function loadSettings() { const s = cfg(); for (const k of ["owner", "repo", "branch", "token"]) $(k).value = s[k] || ""; if (!s.token || !s.owner) $("settings").open = true; }
+function readSettings() { const g = (k) => $(k).value.trim(); return { owner: g("owner"), repo: g("repo") || "twStock", branch: g("branch") || "main", token: g("token") }; }
+const api = (path, s, init = {}) => fetch(`https://api.github.com${path}`, { cache: "no-store", ...init, headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", Authorization: `Bearer ${s.token}`, ...(init.headers || {}) } });
+function explain(status) {
+  return ({ 401: "Token 無效或已過期，請重新產生並貼上。", 403: "Token 權限不足：需要 Actions 的 Read and write。", 404: "找不到 repository 或 workflow：請確認帳號、repo 名稱，以及 run-spec.yml 已上傳；token 也要有這個 repo 的權限。", 422: "GitHub 拒絕了這次要求：請確認主分支名稱正確，且 run-spec.yml 有 workflow_dispatch。" })[status] || `GitHub 回應 ${status}`;
+}
+$("saveSettings").onclick = () => { store.set("tw.settings", readSettings()); $("settingsMsg").textContent = "已儲存。"; };
+$("clearToken").onclick = () => { const s = cfg(); s.token = ""; store.set("tw.settings", s); $("token").value = ""; $("settingsMsg").textContent = "已清除 token。"; };
+$("testSettings").onclick = async () => {
+  const s = readSettings(); store.set("tw.settings", s); $("settingsMsg").textContent = "連線中…";
+  try {
+    const r = await api(`/repos/${encodeURIComponent(s.owner)}/${encodeURIComponent(s.repo)}/actions/workflows/run-spec.yml`, s);
+    $("settingsMsg").textContent = r.ok ? "✓ 連線成功，找得到 run-spec.yml。" : "✗ " + explain(r.status);
+  } catch (e) { $("settingsMsg").textContent = "✗ 連不上 GitHub，請檢查網路。"; }
+};
+
+/* ---------- 執行與等待結果 ---------- */
+let runToken = 0;
+const setStatus = (msg, kind = "") => { const el = $("status"); el.hidden = !msg; el.className = "status" + (kind ? " " + kind : ""); el.textContent = msg || ""; };
+const b64json = (b64) => JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, "")), (c) => c.charCodeAt(0))));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+$("run").onclick = async () => {
+  const s = cfg();
+  if (!s.owner || !s.token) { $("settings").open = true; setStatus("請先在「連線設定」填入帳號與 token。", "err"); return; }
+  let spec;
+  try { spec = buildSpec(); } catch (e) { setStatus(e.message, "err"); return; }
+  $("specView").textContent = JSON.stringify(spec, null, 2);
+  const label = "web-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const mine = ++runToken;
+  $("run").disabled = true; $("result").hidden = true;
+  const base = `/repos/${encodeURIComponent(s.owner)}/${encodeURIComponent(s.repo)}`;
+  try {
+    setStatus("送出中…");
+    const r = await api(`${base}/actions/workflows/run-spec.yml/dispatches`, s, { method: "POST", body: JSON.stringify({ ref: s.branch, inputs: { spec: JSON.stringify(spec), label } }) });
+    if (r.status !== 204) { setStatus("送出失敗：" + explain(r.status), "err"); return; }
+    const t0 = Date.now();
+    while (mine === runToken) {
+      const sec = Math.round((Date.now() - t0) / 1000);
+      setStatus(`GitHub 執行中…已等待 ${sec} 秒（通常 1～2 分鐘）`);
+      await sleep(window.TW_POLL_MS || 4000);
+      if (Date.now() - t0 > 6 * 60 * 1000) { setStatus(`等太久了。請到 https://github.com/${s.owner}/${s.repo}/actions 看這次執行的狀況。`, "err"); return; }
+      let res;
+      try { res = await api(`${base}/contents/last.json?ref=results`, s); } catch (e) { continue; }
+      if (res.status === 404) continue;
+      if (!res.ok) { setStatus("讀取結果失敗：" + explain(res.status), "err"); return; }
+      let data;
+      try { data = b64json((await res.json()).content); } catch (e) { continue; }
+      if (data.label !== label) continue;
+      if (data.kind === "error") { setStatus("執行失敗：" + data.message, "err"); return; }
+      setStatus(`完成，用了 ${Math.round((Date.now() - t0) / 1000)} 秒。`);
+      renderResult(data);
+      return;
+    }
+  } catch (e) {
+    setStatus("連不上 GitHub，請檢查網路。", "err");
+  } finally {
+    if (mine === runToken) $("run").disabled = false;
+  }
+};
+
+/* ---------- 結果 ---------- */
+const pct = (v, nd = 2) => (v == null ? "" : (v * 100).toFixed(nd) + "%");
+const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
+function renderResult(d) {
+  const box = $("result");
+  let html = "";
+  if (d.kind === "screen") {
+    html += `<h2>結果：${esc(d.date)}</h2><div class="funnel">${d.layers.map((l) => `<div><span>${esc(l.label)}</span><b>${l.count}</b></div>`).join("")}</div>`;
+    html += `<h2 style="margin-top:16px">通過全部條件：${d.total} 檔${d.total > d.shown ? `（顯示前 ${d.shown} 檔）` : ""}</h2>`;
+    if (d.rows.length) {
+      html += `<div class="tablewrap"><table><thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>漲幅</th><th>量比</th><th>20日均額(億)</th></tr></thead><tbody>` +
+        d.rows.map((r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.name)}<span class="muted small"> ${r.market === "TSE" ? "市" : "櫃"}</span></td><td>${r.close == null ? "" : r.close.toFixed(2)}</td><td class="${cls(r.ret)}">${pct(r.ret)}</td><td>${r.vol_ratio == null ? "" : r.vol_ratio.toFixed(1)}</td><td>${r.turnover_ma20 == null ? "" : (r.turnover_ma20 / 1e8).toFixed(2)}</td></tr>`).join("") + `</tbody></table></div>`;
+    } else html += `<p class="muted">沒有股票通過全部條件。可以放寬某一層，或看上面哪一層刪掉最多。</p>`;
+  } else {
+    html += `<h2>回測結果</h2><p class="small muted">區間 ${esc(d.start || "-")} ~ ${esc(d.end || "-")}（${d.n_days} 個交易日）｜訊號 ${d.n_signals} 筆，分布在 ${d.n_signal_days} 個交易日<br>條件：${d.conditions.map(esc).join(" → ")}</p>`;
+    html += d.warnings.map((w) => `<div class="warnbox" style="margin-top:8px">${esc(w)}</div>`).join("");
+    html += `<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>持有</th><th>筆數</th><th>平均</th><th>中位數</th><th>勝率</th><th>最差</th><th>最佳</th><th>基準</th><th>超額</th></tr></thead><tbody>` +
+      d.stats.map((r) => `<tr><td>${r.hold}日</td><td>${r.n}</td><td class="${cls(r.mean)}">${pct(r.mean)}</td><td class="${cls(r.median)}">${pct(r.median)}</td><td>${pct(r.win, 1)}</td><td class="${cls(r.worst)}">${pct(r.worst)}</td><td class="${cls(r.best)}">${pct(r.best)}</td><td class="${cls(r.bench)}">${pct(r.bench)}</td><td class="${cls(r.excess)}">${pct(r.excess)}</td></tr>`).join("") + `</tbody></table></div>`;
+    html += `<p class="small muted" style="margin-top:8px">報酬為還原價、已扣手續費與證交稅；出場＝訊號日後第 N 個交易日收盤；基準＝同期通過流動性門檻的股票平均。資料只含目前仍在交易的股票，期間短，請保守看待。</p>`;
+  }
+  box.innerHTML = html; box.hidden = false;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* ---------- 常用組合 ---------- */
+function renderSaved() {
+  const list = store.get("tw.saved", []);
+  $("savedBox").hidden = !list.length;
+  $("saved").innerHTML = list.map((s, i) => `<div class="saved-row"><span>${esc(s.name)}</span><button class="btn" data-load="${i}">套用</button><button class="btn danger" data-del="${i}">刪除</button></div>`).join("");
+}
+$("saveSetup").onclick = () => {
+  const name = (state.layers.flatMap((l) => l.items).map((it) => it.kind === "group" ? it.name : COND[it.key].label).join("、") || "空白").slice(0, 40) + " · " + (state.mode === "backtest" ? "回測" : "篩選");
+  const list = store.get("tw.saved", []); list.unshift({ name, state: JSON.parse(JSON.stringify(state)) }); store.set("tw.saved", list.slice(0, 30)); renderSaved();
+  setStatus("已存成常用組合：" + name);
+};
+$("saved").addEventListener("click", (e) => {
+  const list = store.get("tw.saved", []);
+  if (e.target.dataset.load != null) { state = JSON.parse(JSON.stringify(list[Number(e.target.dataset.load)].state)); save(); renderLayers(); renderDates(); setStatus("已套用。"); }
+  if (e.target.dataset.del != null) { list.splice(Number(e.target.dataset.del), 1); store.set("tw.saved", list); renderSaved(); }
+});
+
+/* ---------- 啟動 ---------- */
+loadSettings(); renderLayers(); renderDates(); renderSaved();
+$("dataHint").textContent = DATA.conditions.length + " 種條件";
+</script>
+</body>
+</html>
