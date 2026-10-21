@@ -87,6 +87,11 @@ input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid 
 .status{padding:10px 12px;border-radius:8px;background:var(--soft)}
 .status.err{background:var(--err-bg);color:var(--err)}
 .warnbox{padding:8px 12px;border-radius:8px;background:var(--warn-bg);color:var(--warn);font-size:.9rem}
+.bgrow{display:flex;gap:12px;align-items:flex-start;text-align:left;padding:10px 2px;border-bottom:1px solid var(--line)}
+.bgrow input{flex:none;width:22px;height:22px;min-height:0;margin:2px 0 0;padding:0}
+.bgrow span{flex:1;min-width:0}.bgrow small{display:block;color:var(--muted);font-size:.78rem;margin-top:2px}
+.vd{display:inline-block;padding:1px 8px;border-radius:10px;font-size:.78rem;font-weight:600;border:1px solid var(--line)}
+.v-ok{background:var(--up);color:#fff;border-color:transparent}.v-mid{border-color:var(--up);color:var(--up)}.v-warn{border-color:#c80;color:#c80}.v-bad{border-color:var(--down);color:var(--down)}.v-na{color:var(--muted)}
 .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:.9rem}
 th,td{padding:7px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
@@ -146,6 +151,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:.78rem;backgrou
       <button id="modeScreen" aria-pressed="true">今日篩選</button>
       <button id="modeBacktest" aria-pressed="false">回測</button>
       <button id="modeRanges" aria-pressed="false">個股區間</button>
+      <button id="modeBatch" aria-pressed="false">批次</button>
     </div>
   </section>
 
@@ -156,6 +162,13 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:.78rem;backgrou
     </div>
     <div class="params" id="rangeParams" style="margin-top:10px"></div>
     <p class="muted small" style="margin-top:8px">這是事後視角：用整年資料回頭找出每個區間。收盤價超出壓力（支撐）達「突破幅度」，區間就結束，接著重新找下一個；只超出一點就是區間變大。不確定怎麼填就用預設值。</p>
+  </section>
+
+  <section id="batchSection" hidden>
+    <h2>批次回測（把每一組篩選各回測一次，做成排行榜）</h2>
+    <p class="muted small" style="margin-bottom:8px">每一組都會算全期、前半段、後半段，各自對照同期市場平均。兩段都贏過才標「穩」。下面可以選要跑哪幾組，預設全部。執行時間比單一回測久（約 5～15 分鐘），請保持這個頁面開著。</p>
+    <div class="row" style="margin-bottom:8px"><button class="btn" id="batchAll">全選</button><button class="btn" id="batchNone">全不選</button></div>
+    <div id="batchGroups"></div>
   </section>
 
   <section id="condSection">
@@ -221,7 +234,7 @@ const COND = Object.fromEntries(DATA.conditions.map((c) => [c.key, c]));
 const GROUP = Object.fromEntries(DATA.groups.map((g) => [g.name, g]));
 
 /* ---------- 狀態 ---------- */
-let state = store.get("tw.state", null) || { mode: "screen", layers: [{ op: "all", items: [] }], asOf: "", start: "", end: "", minTurnover: "5000", hold: "1,5,10,20", entry: "next_open", stock: "", rvals: {} };
+let state = store.get("tw.state", null) || { mode: "screen", layers: [{ op: "all", items: [] }], asOf: "", start: "", end: "", minTurnover: "5000", hold: "1,5,10,20", entry: "next_open", stock: "", rvals: {}, batchNames: null };
 let sheetLayer = 0;
 const save = () => store.set("tw.state", state);
 
@@ -285,8 +298,26 @@ function buildRangeSpec() {
   return { name: "個股區間", mode: "ranges", stock: id, range };
 }
 
+function parseHold() {
+  const hold = String(state.hold).split(/[,，\s]+/).filter(Boolean).map(Number);
+  if (!hold.length || hold.some((n) => !Number.isInteger(n) || n < 1)) throw new Error("持有天數要填 1 以上的整數，例如 1,5,10");
+  return hold;
+}
+function buildBatchSpec() {
+  const mt = Number(state.minTurnover);
+  if (!Number.isFinite(mt) || mt < 0) throw new Error("流動性門檻要填數字（萬元）");
+  const all = DATA.groups.map((g) => g.name);
+  const names = (state.batchNames || all).filter((n) => all.includes(n));
+  if (!names.length) throw new Error("請至少選一組篩選");
+  const spec = { name: "批次回測", mode: "batch", params: { min_turnover: Math.round(mt * 10000), hold_days: parseHold(), entry: state.entry } };
+  if (names.length < all.length) spec.names = names;
+  if (state.start) spec.start = state.start;
+  if (state.end) spec.end = state.end;
+  return spec;
+}
 function buildSpec() {
   if (state.mode === "ranges") return buildRangeSpec();
+  if (state.mode === "batch") return buildBatchSpec();
   const steps = [];
   state.layers.forEach((layer, i) => {
     if (!layer.items.length) return;
@@ -298,9 +329,7 @@ function buildSpec() {
   if (!Number.isFinite(mt) || mt < 0) throw new Error("流動性門檻要填數字（萬元）");
   const spec = { name: "網頁自訂", mode: state.mode, params: { min_turnover: Math.round(mt * 10000) }, steps };
   if (state.mode === "backtest") {
-    const hold = String(state.hold).split(/[,，\s]+/).filter(Boolean).map(Number);
-    if (!hold.length || hold.some((n) => !Number.isInteger(n) || n < 1)) throw new Error("持有天數要填 1 以上的整數，例如 1,5,10");
-    spec.params.hold_days = hold;
+    spec.params.hold_days = parseHold();
     spec.params.entry = state.entry;
     if (state.start) spec.start = state.start;
     if (state.end) spec.end = state.end;
@@ -360,21 +389,28 @@ function renderLayers() {
 }
 
 function renderDates() {
-  const f = state.mode === "backtest"
+  const bt = state.mode === "backtest" || state.mode === "batch";
+  const f = bt
     ? `<div class="field"><label for="start">回測起日（空白 = 最早）</label><input id="start" type="date" value="${esc(state.start)}"></div>
        <div class="field"><label for="end">回測迄日（空白 = 最新）</label><input id="end" type="date" value="${esc(state.end)}"></div>`
     : `<div class="field"><label for="asOf">篩選日期（空白 = 最新一天）</label><input id="asOf" type="date" value="${esc(state.asOf)}"></div>`;
   $("dateFields").innerHTML = f;
-  $("holdField").hidden = $("entryField").hidden = state.mode !== "backtest";
+  $("holdField").hidden = $("entryField").hidden = !bt;
   $("modeScreen").setAttribute("aria-pressed", state.mode === "screen");
   $("modeBacktest").setAttribute("aria-pressed", state.mode === "backtest");
   $("modeRanges").setAttribute("aria-pressed", state.mode === "ranges");
-  const rg = state.mode === "ranges";
-  $("rangeSection").hidden = !rg; $("condSection").hidden = rg; $("dateSection").hidden = rg;
+  $("modeBatch").setAttribute("aria-pressed", state.mode === "batch");
+  const rg = state.mode === "ranges", bm = state.mode === "batch";
+  $("rangeSection").hidden = !rg; $("condSection").hidden = rg || bm; $("dateSection").hidden = rg; $("batchSection").hidden = !bm;
   if (rg) renderRangeForm();
+  if (bm) renderBatchForm();
   $("minTurnover").value = state.minTurnover; $("hold").value = state.hold; $("entry").value = state.entry;
 }
 
+function renderBatchForm() {
+  const chosen = state.batchNames || DATA.groups.map((g) => g.name);
+  $("batchGroups").innerHTML = DATA.groups.map((g) => `<label class="bgrow"><input type="checkbox" data-bg="${esc(g.name)}" ${chosen.includes(g.name) ? "checked" : ""}><span>${esc(g.name)}<small>${esc(g.desc)}</small></span></label>`).join("");
+}
 function renderRangeForm() {
   $("stockId").value = state.stock || "";
   $("rangeParams").innerHTML = rangeDefs().map((p) => {
@@ -435,6 +471,10 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet
 $("modeScreen").onclick = () => { state.mode = "screen"; save(); renderDates(); };
 $("modeBacktest").onclick = () => { state.mode = "backtest"; save(); renderDates(); };
 $("modeRanges").onclick = () => { state.mode = "ranges"; save(); renderDates(); };
+$("modeBatch").onclick = () => { state.mode = "batch"; save(); renderDates(); };
+$("batchGroups").addEventListener("change", () => { state.batchNames = [...document.querySelectorAll("#batchGroups input[data-bg]")].filter((x) => x.checked).map((x) => x.dataset.bg); save(); });
+$("batchAll").onclick = () => { state.batchNames = null; save(); renderBatchForm(); };
+$("batchNone").onclick = () => { state.batchNames = []; save(); renderBatchForm(); };
 $("dateFields").addEventListener("input", (e) => { const m = { asOf: "asOf", start: "start", end: "end" }[e.target.id]; if (m) { state[m] = e.target.value; save(); } });
 $("minTurnover").oninput = (e) => { state.minTurnover = e.target.value; save(); };
 $("hold").oninput = (e) => { state.hold = e.target.value; save(); };
@@ -481,9 +521,9 @@ $("run").onclick = async () => {
     const t0 = Date.now();
     while (mine === runToken) {
       const sec = Math.round((Date.now() - t0) / 1000);
-      setStatus(`GitHub 執行中…已等待 ${sec} 秒（通常 1～2 分鐘）`);
+      setStatus(`GitHub 執行中…已等待 ${sec} 秒（${spec.mode === "batch" ? "批次通常 5～15 分鐘，請保持頁面開著" : "通常 1～2 分鐘"}）`);
       await sleep(window.TW_POLL_MS || 4000);
-      if (Date.now() - t0 > 6 * 60 * 1000) { setStatus(`等太久了。請到 https://github.com/${s.owner}/${s.repo}/actions 看這次執行的狀況。`, "err"); return; }
+      if (Date.now() - t0 > (spec.mode === "batch" ? 35 : 6) * 60 * 1000) { setStatus(`等太久了。請到 https://github.com/${s.owner}/${s.repo}/actions 看這次執行的狀況。`, "err"); return; }
       let res;
       try { res = await api(`${base}/contents/last.json?ref=results`, s); } catch (e) { continue; }
       if (res.status === 404) continue;
@@ -552,7 +592,46 @@ function renderRanges(d) {
   return html;
 }
 
-function renderResult(d) {
+const VERDICT_CLS = { "穩": "v-ok", "部分穩": "v-mid", "不穩": "v-warn", "無效": "v-bad", "樣本少": "v-na", "錯誤": "v-bad" };
+let batchView = { hold: null, sort: "all" };
+function renderBatch(d) {
+  const holds = d.hold_days;
+  if (!holds.includes(batchView.hold)) batchView.hold = holds[Math.floor(holds.length / 2)];
+  const hold = batchView.hold, key = batchView.sort;
+  const items = d.rows.map((r) => ({ r, c: r.holds.find((c) => c.hold === hold) })).filter((x) => x.c);
+  const val = (x) => (key === "n" ? x.c.all.n : x.c[key].excess);
+  items.sort((a, b) => (val(b) ?? -Infinity) - (val(a) ?? -Infinity));
+  const th = (k, label) => `<th data-sort="${k}" style="cursor:pointer">${label}${key === k ? " ▼" : ""}</th>`;
+  let html = `<h2>批次回測排行榜</h2><p class="small muted">${esc(d.start)} ~ ${esc(d.end)}（${d.n_days} 個交易日）｜前半＝${esc(d.start)} 起到 ${esc(d.mid)} 前一天，後半＝${esc(d.mid)} 起｜超額 ＝ 平均報酬 − 同期市場平均</p>`;
+  html += `<div class="seg" role="group" aria-label="持有天數" style="margin:8px 0">` + holds.map((h) => `<button data-hold="${h}" aria-pressed="${h === hold}">持有 ${h} 日</button>`).join("") + `</div>`;
+  html += `<div class="tablewrap"><table><thead><tr><th>群組</th>${th("n", "筆數")}${th("all", "全期")}${th("h1", "前半")}${th("h2", "後半")}<th>勝率</th><th>判定</th></tr></thead><tbody>` +
+    items.map(({ r, c }) => `<tr><td>${esc(r.name)}</td><td>${c.all.n}</td><td class="${cls(c.all.excess)}">${pct(c.all.excess)}</td><td class="${cls(c.h1.excess)}">${pct(c.h1.excess)}</td><td class="${cls(c.h2.excess)}">${pct(c.h2.excess)}</td><td>${pct(c.all.win, 0)}</td><td><span class="vd ${VERDICT_CLS[c.verdict] || ""}">${esc(c.verdict)}</span></td></tr>`).join("") + `</tbody></table></div>`;
+  const bad = d.rows.filter((r) => r.error);
+  if (bad.length) html += bad.map((r) => `<div class="warnbox" style="margin-top:8px">${esc(r.name)} 執行失敗：${esc(r.error)}</div>`).join("");
+  html += d.notes.map((n) => `<p class="small muted" style="margin-top:6px">${esc(n)}</p>`).join("");
+  html += `<div class="row" style="margin-top:10px"><button class="btn" id="dlCsv">下載 CSV</button></div>`;
+  return html;
+}
+function batchCsv(d) {
+  const head = ["群組", "持有天數", "筆數", "全期超額", "前半超額", "後半超額", "全期平均報酬", "勝率", "判定"];
+  const lines = [head.join(",")];
+  for (const r of d.rows) for (const c of r.holds) lines.push([r.name, c.hold, c.all.n, c.all.excess ?? "", c.h1.excess ?? "", c.h2.excess ?? "", c.all.mean ?? "", c.all.win ?? "", c.verdict].join(","));
+  return "\uFEFF" + lines.join("\n");
+}
+let lastResult = null;
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+$("result").addEventListener("click", (e) => {
+  if (!lastResult || lastResult.kind !== "batch") return;
+  const hb = e.target.closest("[data-hold]"), sb = e.target.closest("th[data-sort]");
+  if (hb) { batchView.hold = Number(hb.dataset.hold); renderResult(lastResult, true); }
+  else if (sb) { batchView.sort = sb.dataset.sort; renderResult(lastResult, true); }
+  else if (e.target.id === "dlCsv") download(`批次回測_${lastResult.end}.csv`, batchCsv(lastResult), "text/csv;charset=utf-8");
+});
+function renderResult(d, keepScroll) {
+  lastResult = d;
   const box = $("result");
   let html = "";
   if (d.kind === "screen") {
@@ -564,6 +643,8 @@ function renderResult(d) {
     } else html += `<p class="muted">沒有股票通過全部條件。可以放寬某一層，或看上面哪一層刪掉最多。</p>`;
   } else if (d.kind === "ranges") {
     html += renderRanges(d);
+  } else if (d.kind === "batch") {
+    html += renderBatch(d);
   } else {
     html += `<h2>回測結果</h2><p class="small muted">區間 ${esc(d.start || "-")} ~ ${esc(d.end || "-")}（${d.n_days} 個交易日）｜訊號 ${d.n_signals} 筆，分布在 ${d.n_signal_days} 個交易日<br>條件：${d.conditions.map(esc).join(" → ")}</p>`;
     html += d.warnings.map((w) => `<div class="warnbox" style="margin-top:8px">${esc(w)}</div>`).join("");
@@ -572,7 +653,7 @@ function renderResult(d) {
     html += `<p class="small muted" style="margin-top:8px">報酬為還原價、已扣手續費與證交稅；出場＝訊號日後第 N 個交易日收盤；基準＝同期通過流動性門檻的股票平均。資料只含目前仍在交易的股票，期間短，請保守看待。</p>`;
   }
   box.innerHTML = html; box.hidden = false;
-  box.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!keepScroll) box.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 /* ---------- 常用組合 ---------- */
