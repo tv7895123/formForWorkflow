@@ -152,6 +152,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:.78rem;backgrou
       <button id="modeBacktest" aria-pressed="false">回測</button>
       <button id="modeRanges" aria-pressed="false">個股區間</button>
       <button id="modeBatch" aria-pressed="false">批次</button>
+      <button id="modePicks" aria-pressed="false">今日名單</button>
     </div>
   </section>
 
@@ -169,6 +170,14 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:.78rem;backgrou
     <p class="muted small" style="margin-bottom:8px">每一組都會算全期、前半段、後半段，各自對照同期市場平均。兩段都贏過才標「穩」。下面可以選要跑哪幾組，預設全部。執行時間比單一回測久（約 5～15 分鐘），請保持這個頁面開著。</p>
     <div class="row" style="margin-bottom:8px"><button class="btn" id="batchAll">全選</button><button class="btn" id="batchNone">全不選</button></div>
     <div id="batchGroups"></div>
+  </section>
+
+  <section id="picksSection" hidden>
+    <h2>今日名單（同時符合越多組篩選的股票排越前面）</h2>
+    <p class="muted small" style="margin-bottom:8px">每一組篩選各跑一次，再合併成一張股票表。選的組方向要一致才有意義（例如都偏多）。這是縮小範圍的工具，不是買進建議。</p>
+    <div class="params"><div class="field"><label for="minHits">至少同時符合幾組</label><input id="minHits" inputmode="numeric" value="2"></div></div>
+    <div class="row" style="margin:8px 0"><button class="btn" id="picksAll">全選</button><button class="btn" id="picksNone">全不選</button></div>
+    <div id="picksGroups"></div>
   </section>
 
   <section id="condSection">
@@ -234,7 +243,7 @@ const COND = Object.fromEntries(DATA.conditions.map((c) => [c.key, c]));
 const GROUP = Object.fromEntries(DATA.groups.map((g) => [g.name, g]));
 
 /* ---------- 狀態 ---------- */
-let state = store.get("tw.state", null) || { mode: "screen", layers: [{ op: "all", items: [] }], asOf: "", start: "", end: "", minTurnover: "5000", hold: "1,5,10,20", entry: "next_open", stock: "", rvals: {}, batchNames: null };
+let state = store.get("tw.state", null) || { mode: "screen", layers: [{ op: "all", items: [] }], asOf: "", start: "", end: "", minTurnover: "5000", hold: "1,5,10,20", entry: "next_open", stock: "", rvals: {}, batchNames: null, picksNames: null, minHits: "2" };
 let sheetLayer = 0;
 const save = () => store.set("tw.state", state);
 
@@ -315,8 +324,22 @@ function buildBatchSpec() {
   if (state.end) spec.end = state.end;
   return spec;
 }
+function buildPicksSpec() {
+  const mt = Number(state.minTurnover);
+  if (!Number.isFinite(mt) || mt < 0) throw new Error("流動性門檻要填數字（萬元）");
+  const all = DATA.groups.map((g) => g.name);
+  const names = (state.picksNames || all).filter((n) => all.includes(n));
+  if (!names.length) throw new Error("請至少選一組篩選");
+  const mh = Number(state.minHits);
+  if (!Number.isInteger(mh) || mh < 1) throw new Error("至少同時符合幾組要填 1 以上的整數");
+  const spec = { name: "今日名單", mode: "picks", min_hits: mh, params: { min_turnover: Math.round(mt * 10000) } };
+  if (names.length < all.length) spec.names = names;
+  if (state.asOf) spec.as_of = state.asOf;
+  return spec;
+}
 function buildSpec() {
   if (state.mode === "ranges") return buildRangeSpec();
+  if (state.mode === "picks") return buildPicksSpec();
   if (state.mode === "batch") return buildBatchSpec();
   const steps = [];
   state.layers.forEach((layer, i) => {
@@ -400,13 +423,20 @@ function renderDates() {
   $("modeBacktest").setAttribute("aria-pressed", state.mode === "backtest");
   $("modeRanges").setAttribute("aria-pressed", state.mode === "ranges");
   $("modeBatch").setAttribute("aria-pressed", state.mode === "batch");
-  const rg = state.mode === "ranges", bm = state.mode === "batch";
-  $("rangeSection").hidden = !rg; $("condSection").hidden = rg || bm; $("dateSection").hidden = rg; $("batchSection").hidden = !bm;
+  $("modePicks").setAttribute("aria-pressed", state.mode === "picks");
+  const rg = state.mode === "ranges", bm = state.mode === "batch", pm = state.mode === "picks";
+  $("rangeSection").hidden = !rg; $("condSection").hidden = rg || bm || pm; $("dateSection").hidden = rg; $("batchSection").hidden = !bm; $("picksSection").hidden = !pm;
+  if (pm) renderPicksForm();
   if (rg) renderRangeForm();
   if (bm) renderBatchForm();
   $("minTurnover").value = state.minTurnover; $("hold").value = state.hold; $("entry").value = state.entry;
 }
 
+function renderPicksForm() {
+  const chosen = state.picksNames || DATA.groups.map((g) => g.name);
+  $("minHits").value = state.minHits;
+  $("picksGroups").innerHTML = DATA.groups.map((g) => `<label class="bgrow"><input type="checkbox" data-pg="${esc(g.name)}" ${chosen.includes(g.name) ? "checked" : ""}><span>${esc(g.name)}<small>${esc(g.desc)}</small></span></label>`).join("");
+}
 function renderBatchForm() {
   const chosen = state.batchNames || DATA.groups.map((g) => g.name);
   $("batchGroups").innerHTML = DATA.groups.map((g) => `<label class="bgrow"><input type="checkbox" data-bg="${esc(g.name)}" ${chosen.includes(g.name) ? "checked" : ""}><span>${esc(g.name)}<small>${esc(g.desc)}</small></span></label>`).join("");
@@ -472,6 +502,11 @@ $("modeScreen").onclick = () => { state.mode = "screen"; save(); renderDates(); 
 $("modeBacktest").onclick = () => { state.mode = "backtest"; save(); renderDates(); };
 $("modeRanges").onclick = () => { state.mode = "ranges"; save(); renderDates(); };
 $("modeBatch").onclick = () => { state.mode = "batch"; save(); renderDates(); };
+$("modePicks").onclick = () => { state.mode = "picks"; save(); renderDates(); };
+$("picksGroups").addEventListener("change", () => { state.picksNames = [...document.querySelectorAll("#picksGroups input[data-pg]")].filter((x) => x.checked).map((x) => x.dataset.pg); save(); });
+$("picksAll").onclick = () => { state.picksNames = null; save(); renderPicksForm(); };
+$("picksNone").onclick = () => { state.picksNames = []; save(); renderPicksForm(); };
+$("minHits").oninput = (e) => { state.minHits = e.target.value; save(); };
 $("batchGroups").addEventListener("change", () => { state.batchNames = [...document.querySelectorAll("#batchGroups input[data-bg]")].filter((x) => x.checked).map((x) => x.dataset.bg); save(); });
 $("batchAll").onclick = () => { state.batchNames = null; save(); renderBatchForm(); };
 $("batchNone").onclick = () => { state.batchNames = []; save(); renderBatchForm(); };
@@ -592,6 +627,23 @@ function renderRanges(d) {
   return html;
 }
 
+function renderPicks(d) {
+  let html = `<h2>今日名單：${esc(d.date)}</h2><p class="small muted">至少同時符合 ${d.min_hits} 組｜共 ${d.total} 檔${d.total > d.shown ? `（顯示前 ${d.shown} 檔）` : ""}</p>`;
+  html += `<details style="margin:8px 0"><summary>各組今天符合的檔數</summary><p class="small">${d.group_counts.map((c) => `${esc(c.name)} <b>${c.count}</b>`).join("　")}</p></details>`;
+  if (d.rows.length) {
+    html += `<div class="tablewrap"><table><thead><tr><th>代號</th><th>名稱</th><th>組數</th><th>收盤</th><th>漲幅</th><th>量比</th><th>區間</th></tr></thead><tbody>` +
+      d.rows.map((r, i) => `<tr data-pick="${i}" style="cursor:pointer"><td>${esc(r.id)}</td><td>${esc(r.name)}<span class="muted small"> ${r.market === "TSE" ? "市" : "櫃"}</span></td><td><b>${r.n_hits}</b></td><td>${r.close == null ? "" : r.close.toFixed(2)}</td><td class="${cls(r.ret)}">${pct(r.ret)}</td><td>${r.vol_ratio == null ? "" : r.vol_ratio.toFixed(1)}</td><td>${esc(r.range)}</td></tr><tr hidden data-detail="${i}"><td colspan="7" style="text-align:left;white-space:normal"><span class="small">符合：${r.groups.map(esc).join("、")}${r.range_s != null ? `<br>區間 ${r.range_s} ~ ${r.range_r}` : ""}</span><br><button class="btn" data-ranges="${esc(r.id)}">看這檔的個股區間</button></td></tr>`).join("") + `</tbody></table></div><p class="small muted" style="margin-top:6px">點一列可展開，看符合哪幾組，並可跳到個股區間。</p>`;
+  } else html += `<p class="muted" style="margin-top:8px">沒有股票同時符合這麼多組。可以降低「至少同時符合幾組」。</p>`;
+  html += d.errors.map((e) => `<div class="warnbox" style="margin-top:8px">${esc(e.name)} 執行失敗：${esc(e.error)}</div>`).join("");
+  html += d.notes.map((n) => `<p class="small muted" style="margin-top:6px">${esc(n)}</p>`).join("");
+  html += `<div class="row" style="margin-top:10px"><button class="btn" id="dlPicks">下載 CSV</button></div>`;
+  return html;
+}
+function picksCsv(d) {
+  const lines = ["代號,名稱,市場,組數,收盤,漲幅,量比,區間,符合的組"];
+  for (const r of d.rows) lines.push([r.id, r.name, r.market, r.n_hits, r.close ?? "", r.ret ?? "", r.vol_ratio ?? "", r.range, `"${r.groups.join("、")}"`].join(","));
+  return "\uFEFF" + lines.join("\n");
+}
 const VERDICT_CLS = { "穩": "v-ok", "部分穩": "v-mid", "不穩": "v-warn", "無效": "v-bad", "樣本少": "v-na", "錯誤": "v-bad" };
 let batchView = { hold: null, sort: "all" };
 function renderBatch(d) {
@@ -609,7 +661,7 @@ function renderBatch(d) {
   const bad = d.rows.filter((r) => r.error);
   if (bad.length) html += bad.map((r) => `<div class="warnbox" style="margin-top:8px">${esc(r.name)} 執行失敗：${esc(r.error)}</div>`).join("");
   html += d.notes.map((n) => `<p class="small muted" style="margin-top:6px">${esc(n)}</p>`).join("");
-  html += `<div class="row" style="margin-top:10px"><button class="btn" id="dlCsv">下載 CSV</button></div>`;
+  html += `<div class="row" style="margin-top:10px"><button class="btn" id="dlCsv">下載 CSV</button><button class="btn" id="toPicks">用判定「穩」的組做今日名單</button></div>`;
   return html;
 }
 function batchCsv(d) {
@@ -624,10 +676,22 @@ function download(name, text, type) {
   a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove();
 }
 $("result").addEventListener("click", (e) => {
+  if (lastResult && lastResult.kind === "picks") {
+    const tr = e.target.closest("tr[data-pick]"), rb = e.target.closest("[data-ranges]");
+    if (rb) { state.mode = "ranges"; state.stock = rb.dataset.ranges; save(); renderDates(); window.scrollTo({ top: 0, behavior: "smooth" }); setStatus(`已切到個股區間，代號 ${state.stock}，按「執行」查看。`); }
+    else if (tr) { const d = document.querySelector(`tr[data-detail="${tr.dataset.pick}"]`); d.hidden = !d.hidden; }
+    else if (e.target.id === "dlPicks") download(`今日名單_${lastResult.date}.csv`, picksCsv(lastResult), "text/csv;charset=utf-8");
+    return;
+  }
   if (!lastResult || lastResult.kind !== "batch") return;
   const hb = e.target.closest("[data-hold]"), sb = e.target.closest("th[data-sort]");
   if (hb) { batchView.hold = Number(hb.dataset.hold); renderResult(lastResult, true); }
   else if (sb) { batchView.sort = sb.dataset.sort; renderResult(lastResult, true); }
+  else if (e.target.id === "toPicks") {
+    const ok = lastResult.rows.filter((r) => r.verdict === "穩" || r.verdict === "部分穩").map((r) => r.name);
+    if (!ok.length) { setStatus("沒有判定為「穩」或「部分穩」的組。", "err"); return; }
+    state.picksNames = ok; state.mode = "picks"; save(); renderDates(); window.scrollTo({ top: 0, behavior: "smooth" }); setStatus(`已選入 ${ok.length} 組：${ok.join("、")}。可調整後按「執行」。`);
+  }
   else if (e.target.id === "dlCsv") download(`批次回測_${lastResult.end}.csv`, batchCsv(lastResult), "text/csv;charset=utf-8");
 });
 function renderResult(d, keepScroll) {
@@ -645,6 +709,8 @@ function renderResult(d, keepScroll) {
     html += renderRanges(d);
   } else if (d.kind === "batch") {
     html += renderBatch(d);
+  } else if (d.kind === "picks") {
+    html += renderPicks(d);
   } else {
     html += `<h2>回測結果</h2><p class="small muted">區間 ${esc(d.start || "-")} ~ ${esc(d.end || "-")}（${d.n_days} 個交易日）｜訊號 ${d.n_signals} 筆，分布在 ${d.n_signal_days} 個交易日<br>條件：${d.conditions.map(esc).join(" → ")}</p>`;
     html += d.warnings.map((w) => `<div class="warnbox" style="margin-top:8px">${esc(w)}</div>`).join("");
