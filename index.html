@@ -204,6 +204,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:.78rem;backgrou
   <section class="row">
     <button class="btn primary grow" id="run">執行</button>
     <button class="btn" id="saveSetup">存成常用</button>
+    <button class="btn" id="loadLast">載入上次結果</button>
   </section>
 
   <div id="status" hidden></div>
@@ -549,7 +550,8 @@ $("testSettings").onclick = async () => {
 /* ---------- 執行與等待結果 ---------- */
 let runToken = 0;
 const setStatus = (msg, kind = "") => { const el = $("status"); el.hidden = !msg; el.className = "status" + (kind ? " " + kind : ""); el.textContent = msg || ""; };
-const b64json = (b64) => JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, "")), (c) => c.charCodeAt(0))));
+/* 讀 results 分支的 last.json。用 raw 格式，檔案超過 1MB 也讀得到（GitHub 的一般格式超過 1MB 不給內容）。 */
+const lastJson = (s) => api(`/repos/${encodeURIComponent(s.owner)}/${encodeURIComponent(s.repo)}/contents/last.json?ref=results`, s, { headers: { Accept: "application/vnd.github.raw+json" } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 $("run").onclick = async () => {
@@ -573,11 +575,11 @@ $("run").onclick = async () => {
       await sleep(window.TW_POLL_MS || 4000);
       if (Date.now() - t0 > (spec.mode === "batch" ? 35 : 6) * 60 * 1000) { setStatus(`等太久了。請到 https://github.com/${s.owner}/${s.repo}/actions 看這次執行的狀況。`, "err"); return; }
       let res;
-      try { res = await api(`${base}/contents/last.json?ref=results`, s); } catch (e) { continue; }
+      try { res = await lastJson(s); } catch (e) { continue; }
       if (res.status === 404) continue;
       if (!res.ok) { setStatus("讀取結果失敗：" + explain(res.status), "err"); return; }
       let data;
-      try { data = b64json((await res.json()).content); } catch (e) { continue; }
+      try { data = await res.json(); } catch (e) { setStatus("結果檔讀取失敗（內容不是正確的 JSON），請到 Actions 看這次執行。", "err"); return; }
       if (data.label !== label) continue;
       if (data.kind === "error") { setStatus("執行失敗：" + data.message, "err"); return; }
       setStatus(`完成，用了 ${Math.round((Date.now() - t0) / 1000)} 秒。`);
@@ -591,6 +593,22 @@ $("run").onclick = async () => {
   }
 };
 
+/* ---------- 載入上次結果（網頁重新整理後也能找回） ---------- */
+async function loadLast(auto) {
+  const s = cfg();
+  if (!s.owner || !s.token) { if (!auto) { $("settings").open = true; setStatus("請先在「連線設定」填入帳號與 token。", "err"); } return; }
+  if (!auto) setStatus("讀取上次結果…");
+  try {
+    const res = await lastJson(s);
+    if (res.status === 404) { if (!auto) setStatus("GitHub 上還沒有結果，請先執行一次。", "err"); return; }
+    if (!res.ok) { if (!auto) setStatus("讀取失敗：" + explain(res.status), "err"); return; }
+    const data = await res.json();
+    if (data.kind === "error") { if (!auto) setStatus("上次執行失敗：" + data.message, "err"); return; }
+    const when = data.generated_at ? new Date(data.generated_at).toLocaleString("zh-TW", { hour12: false }) : "";
+    setStatus(`這是上次的結果${when ? "（" + when + " 產生）" : ""}。`);
+    renderResult(data, auto);
+  } catch (e) { if (!auto) setStatus("讀取失敗，請檢查網路或結果檔。", "err"); }
+}
 /* ---------- 結果 ---------- */
 const pct = (v, nd = 2) => (v == null ? "" : (v * 100).toFixed(nd) + "%");
 const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
@@ -777,6 +795,8 @@ $("saved").addEventListener("click", (e) => {
 
 /* ---------- 啟動 ---------- */
 loadSettings(); renderLayers(); renderDates(); renderSaved();
+$("loadLast").onclick = () => loadLast(false);
+if (!window.TW_NO_AUTOLOAD) loadLast(true);
 $("dataHint").textContent = DATA.conditions.length + " 種條件";
 </script>
 </body>
